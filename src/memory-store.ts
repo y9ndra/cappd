@@ -138,6 +138,13 @@ export class MemoryStore implements ResourceStore {
       throw new InvalidReservationStateError(reservationId, 'expired', 'commit');
     }
 
+    // Reject if actual usage exceeds reservation (prevents unauthorized capacity consumption)
+    if (actualUsage.amount > reservation.reserved.amount) {
+      throw new CappdError(
+        `Actual usage (${actualUsage.amount} ${actualUsage.unit}) exceeds reservation (${reservation.reserved.amount} ${reservation.reserved.unit}) for reservation "${reservationId}"`
+      );
+    }
+
     // Reconcile: Release the reserved hold and commit the actual usage
     budget.reserved -= reservation.reserved.amount;
     budget.committed += actualUsage.amount;
