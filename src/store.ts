@@ -4,6 +4,16 @@ import { Budget, BudgetState, Reservation, ResourceUsage } from './types.js';
  * Storage contract for managing resource budgets and reservation lifecycles.
  * Decouples the domain logic from the underlying storage mechanism
  * (e.g. MemoryStore in Stage 1, RedisStore in Stage 4).
+ *
+ * Concurrency Contract:
+ * All implementations MUST guarantee atomic isolation for state-modifying operations:
+ * - Fundamental Invariant: committed + reserved <= limit must NEVER be violated.
+ * - reserve(): capacity check, limit validation, and reservation creation must occur atomically.
+ * - commit(): reservation state check and balance reconciliation must occur atomically.
+ * - release(): reservation state check and balance rollback must occur atomically.
+ *
+ * Note: Process-local synchronization is insufficient for multi-process environments;
+ * distributed deployments require an external atomic coordination store (e.g. Redis + Lua).
  */
 export interface ResourceStore {
   /**
