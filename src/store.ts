@@ -3,7 +3,7 @@ import { Budget, BudgetState, Reservation, ResourceUsage } from './types.js';
 /**
  * Storage contract for managing resource budgets and reservation lifecycles.
  * Decouples the domain logic from the underlying storage mechanism
- * (e.g. MemoryStore in Stage 1, RedisStore in Stage 4).
+ * (e.g. MemoryStore for in-memory/testing, RedisStore for distributed clusters).
  *
  * Concurrency Contract:
  * All implementations MUST guarantee atomic isolation for state-modifying operations:

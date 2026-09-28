@@ -7,7 +7,7 @@ import {
   ReservationNotFoundError,
 } from '../src/types.js';
 
-describe('MemoryStore — Stage 2 Reservation Lifecycle', () => {
+describe('MemoryStore — Reservation & Reconciliation Lifecycle', () => {
   let store: MemoryStore;
 
   beforeEach(() => {
@@ -15,7 +15,7 @@ describe('MemoryStore — Stage 2 Reservation Lifecycle', () => {
   });
 
   // ============================================================
-  // BUDGET MANAGEMENT (carried from Stage 1)
+  // BUDGET MANAGEMENT
   // ============================================================
 
   describe('Budget Management', () => {

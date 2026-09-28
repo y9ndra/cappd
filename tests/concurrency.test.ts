@@ -7,7 +7,7 @@ import {
   ResourceUsage,
 } from '../src/types.js';
 
-describe('Stage 3 — Concurrency & Atomicity Requirements', () => {
+describe('Concurrency & Atomicity Guarantees', () => {
   let store: MemoryStore;
 
   beforeEach(() => {
@@ -15,7 +15,7 @@ describe('Stage 3 — Concurrency & Atomicity Requirements', () => {
   });
 
   // ============================================================
-  // 1. CONCEPTUAL CONCURRENCY SCENARIO (Part 5)
+  // 1. CORE CONCURRENCY SCENARIOS
   // ============================================================
 
   describe('Core Concurrency Scenario: limit = 50,000, two 30,000 reservations', () => {
@@ -140,7 +140,7 @@ describe('Stage 3 — Concurrency & Atomicity Requirements', () => {
     /**
      * AtomicStoreSimulator:
      * Shows that executing capacity check and mutation as an indivisible atomic unit
-     * (the pattern required in Stage 4 via Redis + Lua) guarantees invariant safety.
+     * (the pattern implemented in distributed backends via atomic Lua scripts) guarantees invariant safety.
      */
     class AtomicStoreSimulator {
       private limit = 50000;
