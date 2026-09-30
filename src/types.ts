@@ -101,3 +101,40 @@ export class InvalidReservationStateError extends CappdError {
     this.name = 'InvalidReservationStateError';
   }
 }
+
+/**
+ * Thrown when an operation succeeds but measuring its actual resource usage fails.
+ * When this occurs, the held reservation is automatically released to prevent capacity leakage.
+ */
+export class UsageMeasurementError extends CappdError {
+  constructor(public readonly reservationId: string, public readonly cause: unknown) {
+    const causeMessage = cause instanceof Error ? cause.message : String(cause);
+    super(
+      `Failed to measure actual resource usage for reservation "${reservationId}": ${causeMessage}`
+    );
+    this.name = 'UsageMeasurementError';
+  }
+}
+
+/**
+ * Generic abstraction for determining actual resource usage produced by an operation.
+ * Decouples resource measurement from budget management and storage backends.
+ */
+export interface UsageProvider<TResult = unknown> {
+  getUsage(result: TResult): Promise<ResourceUsage> | ResourceUsage;
+}
+
+/**
+ * Functional representation of a UsageProvider.
+ */
+export type UsageProviderFn<TResult = unknown> = (
+  result: TResult
+) => Promise<ResourceUsage> | ResourceUsage;
+
+/**
+ * Union type allowing either a UsageProvider instance or a functional usage resolver.
+ */
+export type UsageResolver<TResult = unknown> =
+  | UsageProvider<TResult>
+  | UsageProviderFn<TResult>;
+
