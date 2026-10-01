@@ -3,6 +3,7 @@ import { Cappd } from './cappd.js';
 import {
   BudgetExceededError,
   CappdError,
+  CappdInfrastructureError,
   Reservation,
   ResourceUsage,
   UsageResolver,
@@ -35,6 +36,17 @@ export interface ExpressProtectionOptions<TResult> {
    */
   onBudgetExceeded?: (
     error: BudgetExceededError,
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) => void | Promise<void>;
+
+  /**
+   * Optional custom handler invoked when an underlying infrastructure error occurs (e.g. Redis unavailable).
+   * If omitted, defaults to sending HTTP 503 Service Unavailable with JSON error details.
+   */
+  onInfrastructureError?: (
+    error: CappdInfrastructureError,
     req: Request,
     res: Response,
     next: NextFunction
@@ -131,6 +143,20 @@ export function protectRoute<TResult>(
           requested: error.requested,
           available: error.available,
           unit: error.unit,
+        });
+        return;
+      }
+
+      if (error instanceof CappdInfrastructureError) {
+        if (options.onInfrastructureError) {
+          await options.onInfrastructureError(error, req, res, next);
+          return;
+        }
+
+        res.status(503).json({
+          error: 'CappdInfrastructureError',
+          message: error.message,
+          operation: error.operation,
         });
         return;
       }
