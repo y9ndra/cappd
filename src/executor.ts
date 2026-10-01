@@ -117,6 +117,12 @@ export async function withReservation<TResult>(
   }
 
   // Step 4: Reconcile actual usage with reservation
+  // IMPORTANT RELIABILITY SEMANTICS ON COMMIT FAILURE:
+  // If store.commit() fails (e.g. CappdInfrastructureError or CappdError overage),
+  // we deliberately DO NOT attempt an automatic store.release().
+  // On network drops or timeouts, the commit operation is in an UNKNOWN state
+  // (Redis may or may not have executed the commit). Naively calling release()
+  // could cause double deduction or corrupted balances.
   const committedReservation = await store.commit(reservation.id, actualUsage);
 
   return {

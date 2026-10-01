@@ -117,6 +117,25 @@ export class UsageMeasurementError extends CappdError {
 }
 
 /**
+ * Thrown when an underlying infrastructure component (such as Redis or the network)
+ * fails, times out, or becomes unreachable.
+ *
+ * When this occurs during capacity checks or reservations, Cappd fails closed
+ * to prevent unmetered resource consumption.
+ */
+export class CappdInfrastructureError extends CappdError {
+  constructor(
+    message: string,
+    public readonly cause?: unknown,
+    public readonly operation?: string,
+    public readonly reservationId?: string
+  ) {
+    super(message);
+    this.name = 'CappdInfrastructureError';
+  }
+}
+
+/**
  * Generic abstraction for determining actual resource usage produced by an operation.
  * Decouples resource measurement from budget management and storage backends.
  */

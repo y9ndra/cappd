@@ -6,6 +6,7 @@ import {
   BudgetExceededError,
   BudgetState,
   CappdError,
+  CappdInfrastructureError,
   InvalidReservationStateError,
   Reservation,
   ReservationNotFoundError,
@@ -30,6 +31,12 @@ export interface RedisStoreOptions {
    * Namespace prefix for Redis keys (default: 'cappd').
    */
   keyPrefix?: string;
+
+  /**
+   * Maximum duration in milliseconds to wait for a Redis command before timing out
+   * and throwing a CappdInfrastructureError.
+   */
+  commandTimeoutMs?: number;
 }
 
 /**
@@ -44,9 +51,11 @@ export class RedisStore implements ResourceStore {
   private readonly redis: Redis;
   private readonly ownsClient: boolean;
   private readonly prefix: string;
+  private readonly commandTimeoutMs?: number;
 
   constructor(options: RedisStoreOptions = {}) {
     this.prefix = options.keyPrefix ?? 'cappd';
+    this.commandTimeoutMs = options.commandTimeoutMs;
 
     if (options.client) {
       this.redis = options.client;
@@ -54,9 +63,12 @@ export class RedisStore implements ResourceStore {
     } else {
       const redisUrl = options.url ?? process.env.REDIS_URL ?? 'redis://localhost:6379';
       this.redis = new Redis(redisUrl, {
-        maxRetriesPerRequest: 3,
+        maxRetriesPerRequest: 1, // Fast-fail when Redis is unreachable
         lazyConnect: true,
+        connectTimeout: options.commandTimeoutMs ?? 5000,
       });
+      // Attach error listener to prevent unhandled EventEmitter warning logs on network drops
+      this.redis.on('error', () => {});
       this.ownsClient = true;
     }
   }
@@ -73,6 +85,55 @@ export class RedisStore implements ResourceStore {
   }
 
   /**
+   * Wraps Redis command execution with optional command timeout and infrastructure error classification.
+   */
+  private async runCommand<T>(
+    operation: string,
+    action: () => Promise<T>,
+    reservationId?: string
+  ): Promise<T> {
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeoutMs = this.commandTimeoutMs;
+
+    const timeoutPromise = timeoutMs
+      ? new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(() => {
+            reject(
+              new CappdInfrastructureError(
+                `Redis command "${operation}" timed out after ${timeoutMs}ms`,
+                undefined,
+                operation,
+                reservationId
+              )
+            );
+          }, timeoutMs);
+        })
+      : null;
+
+    try {
+      const actionPromise = action();
+      return timeoutPromise
+        ? await Promise.race([actionPromise, timeoutPromise])
+        : await actionPromise;
+    } catch (error) {
+      if (error instanceof CappdError) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      throw new CappdInfrastructureError(
+        `Redis infrastructure failure during "${operation}": ${message}`,
+        error,
+        operation,
+        reservationId
+      );
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+    }
+  }
+
+  /**
    * Initializes or updates a budget ceiling for a given key.
    */
   async setBudget(budget: Budget): Promise<void> {
@@ -81,12 +142,14 @@ export class RedisStore implements ResourceStore {
     }
 
     const bKey = this.budgetKey(budget.key);
-    await this.redis.eval(
-      SET_BUDGET_LUA,
-      1,
-      bKey,
-      budget.limit.toString(),
-      budget.unit
+    await this.runCommand('setBudget', () =>
+      this.redis.eval(
+        SET_BUDGET_LUA,
+        1,
+        bKey,
+        budget.limit.toString(),
+        budget.unit
+      )
     );
   }
 
@@ -96,7 +159,9 @@ export class RedisStore implements ResourceStore {
    */
   async getBudget(key: string): Promise<BudgetState | null> {
     const bKey = this.budgetKey(key);
-    const data = await this.redis.hmget(bKey, 'limit', 'unit', 'committed', 'reserved');
+    const data = (await this.runCommand('getBudget', () =>
+      this.redis.hmget(bKey, 'limit', 'unit', 'committed', 'reserved')
+    )) as Array<string | null>;
 
     const rawLimit = data[0];
     const unit = data[1];
@@ -136,54 +201,60 @@ export class RedisStore implements ResourceStore {
     const bKey = this.budgetKey(key);
     const rKey = this.reservationKey(id);
 
-    const result = (await this.redis.eval(
-      RESERVE_LUA,
-      2,
-      bKey,
-      rKey,
-      id,
-      key,
-      usage.amount.toString(),
-      usage.unit,
-      ttlMs.toString(),
-      now.toString()
-    )) as string[];
+    return await this.runCommand(
+      'reserve',
+      async () => {
+        const result = (await this.redis.eval(
+          RESERVE_LUA,
+          2,
+          bKey,
+          rKey,
+          id,
+          key,
+          usage.amount.toString(),
+          usage.unit,
+          ttlMs.toString(),
+          now.toString()
+        )) as string[];
 
-    const status = result[0];
+        const status = result[0];
 
-    if (status === 'ERR_BUDGET_NOT_FOUND') {
-      throw new CappdError(`No budget configured for key "${key}"`);
-    }
+        if (status === 'ERR_BUDGET_NOT_FOUND') {
+          throw new CappdError(`No budget configured for key "${key}"`);
+        }
 
-    if (status === 'ERR_UNIT_MISMATCH') {
-      const expectedUnit = result[1];
-      const receivedUnit = result[2];
-      throw new CappdError(
-        `Resource unit mismatch for key "${key}". Expected "${expectedUnit}", received "${receivedUnit}"`
-      );
-    }
+        if (status === 'ERR_UNIT_MISMATCH') {
+          const expectedUnit = result[1];
+          const receivedUnit = result[2];
+          throw new CappdError(
+            `Resource unit mismatch for key "${key}". Expected "${expectedUnit}", received "${receivedUnit}"`
+          );
+        }
 
-    if (status === 'ERR_BUDGET_EXCEEDED') {
-      const available = Number(result[1]);
-      const unit = result[2] ?? usage.unit;
-      throw new BudgetExceededError(key, usage.amount, available, unit);
-    }
+        if (status === 'ERR_BUDGET_EXCEEDED') {
+          const available = Number(result[1]);
+          const unit = result[2] ?? usage.unit;
+          throw new BudgetExceededError(key, usage.amount, available, unit);
+        }
 
-    if (status === 'OK') {
-      const createdAt = Number(result[1]);
-      const expiresAt = Number(result[2]);
+        if (status === 'OK') {
+          const createdAt = Number(result[1]);
+          const expiresAt = Number(result[2]);
 
-      return {
-        id,
-        key,
-        reserved: { amount: usage.amount, unit: usage.unit },
-        status: 'reserved',
-        createdAt,
-        expiresAt,
-      };
-    }
+          return {
+            id,
+            key,
+            reserved: { amount: usage.amount, unit: usage.unit },
+            status: 'reserved' as ReservationStatus,
+            createdAt,
+            expiresAt,
+          };
+        }
 
-    throw new CappdError(`Unexpected response from reserve Lua script: ${JSON.stringify(result)}`);
+        throw new CappdError(`Unexpected response from reserve Lua script: ${JSON.stringify(result)}`);
+      },
+      id
+    );
   }
 
   /**
@@ -197,79 +268,85 @@ export class RedisStore implements ResourceStore {
       throw new CappdError(`Committed actual usage cannot be negative, got ${actualUsage.amount}`);
     }
 
-    const rKey = this.reservationKey(reservationId);
-    const budgetKeyName = await this.redis.hget(rKey, 'key');
+    return await this.runCommand(
+      'commit',
+      async () => {
+        const rKey = this.reservationKey(reservationId);
+        const budgetKeyName = await this.redis.hget(rKey, 'key');
 
-    if (!budgetKeyName) {
-      throw new ReservationNotFoundError(reservationId);
-    }
+        if (!budgetKeyName) {
+          throw new ReservationNotFoundError(reservationId);
+        }
 
-    const bKey = this.budgetKey(budgetKeyName);
-    const now = Date.now();
+        const bKey = this.budgetKey(budgetKeyName);
+        const now = Date.now();
 
-    const result = (await this.redis.eval(
-      COMMIT_LUA,
-      2,
-      rKey,
-      bKey,
-      actualUsage.amount.toString(),
-      actualUsage.unit,
-      now.toString()
-    )) as string[];
+        const result = (await this.redis.eval(
+          COMMIT_LUA,
+          2,
+          rKey,
+          bKey,
+          actualUsage.amount.toString(),
+          actualUsage.unit,
+          now.toString()
+        )) as string[];
 
-    const status = result[0];
+        const status = result[0];
 
-    if (status === 'ERR_RESERVATION_NOT_FOUND') {
-      throw new ReservationNotFoundError(reservationId);
-    }
+        if (status === 'ERR_RESERVATION_NOT_FOUND') {
+          throw new ReservationNotFoundError(reservationId);
+        }
 
-    if (status === 'ERR_INVALID_STATE') {
-      const currentStatus = result[1] as ReservationStatus;
-      const attemptedAction = result[2] ?? 'commit';
-      throw new InvalidReservationStateError(reservationId, currentStatus, attemptedAction);
-    }
+        if (status === 'ERR_INVALID_STATE') {
+          const currentStatus = result[1] as ReservationStatus;
+          const attemptedAction = result[2] ?? 'commit';
+          throw new InvalidReservationStateError(reservationId, currentStatus, attemptedAction);
+        }
 
-    if (status === 'ERR_UNIT_MISMATCH') {
-      const expectedUnit = result[1];
-      const receivedUnit = result[2];
-      throw new CappdError(
-        `Resource unit mismatch on commit. Expected "${expectedUnit}", received "${receivedUnit}"`
-      );
-    }
+        if (status === 'ERR_UNIT_MISMATCH') {
+          const expectedUnit = result[1];
+          const receivedUnit = result[2];
+          throw new CappdError(
+            `Resource unit mismatch on commit. Expected "${expectedUnit}", received "${receivedUnit}"`
+          );
+        }
 
-    if (status === 'ERR_OVERAGE') {
-      const actual = result[1];
-      const reserved = result[2];
-      const unit = result[3];
-      throw new CappdError(
-        `Actual usage (${actual} ${unit}) exceeds reservation (${reserved} ${unit}) for reservation "${reservationId}"`
-      );
-    }
+        if (status === 'ERR_OVERAGE') {
+          const actual = result[1];
+          const reserved = result[2];
+          const unit = result[3];
+          throw new CappdError(
+            `Actual usage (${actual} ${unit}) exceeds reservation (${reserved} ${unit}) for reservation "${reservationId}"`
+          );
+        }
 
-    if (status === 'ERR_BUDGET_NOT_FOUND') {
-      throw new CappdError(`Budget for key "${budgetKeyName}" no longer exists`);
-    }
+        if (status === 'ERR_BUDGET_NOT_FOUND') {
+          throw new CappdError(`Budget for key "${budgetKeyName}" no longer exists`);
+        }
 
-    if (status === 'OK') {
-      const createdAt = Number(result[1]);
-      const expiresAt = Number(result[2]);
-      const reservedAmount = Number(result[3]);
-      const committedAmount = Number(result[4]);
-      const unit = result[5] ?? actualUsage.unit;
-      const key = result[6] ?? budgetKeyName;
+        if (status === 'OK') {
+          const createdAt = Number(result[1]);
+          const expiresAt = Number(result[2]);
+          const reservedAmount = Number(result[3]);
+          const committedAmount = Number(result[4]);
+          const unit = result[5] ?? actualUsage.unit;
+          const key = result[6] ?? budgetKeyName;
 
-      return {
-        id: reservationId,
-        key,
-        reserved: { amount: reservedAmount, unit },
-        status: 'committed',
-        createdAt,
-        expiresAt,
-        committed: { amount: committedAmount, unit },
-      };
-    }
+          return {
+            id: reservationId,
+            key,
+            reserved: { amount: reservedAmount, unit },
+            status: 'committed' as ReservationStatus,
+            createdAt,
+            expiresAt,
+            committed: { amount: committedAmount, unit },
+          };
+        }
 
-    throw new CappdError(`Unexpected response from commit Lua script: ${JSON.stringify(result)}`);
+        throw new CappdError(`Unexpected response from commit Lua script: ${JSON.stringify(result)}`);
+      },
+      reservationId
+    );
   }
 
   /**
@@ -277,52 +354,58 @@ export class RedisStore implements ResourceStore {
    * back to the budget's available capacity.
    */
   async release(reservationId: string): Promise<Reservation> {
-    const rKey = this.reservationKey(reservationId);
-    const budgetKeyName = await this.redis.hget(rKey, 'key');
+    return await this.runCommand(
+      'release',
+      async () => {
+        const rKey = this.reservationKey(reservationId);
+        const budgetKeyName = await this.redis.hget(rKey, 'key');
 
-    if (!budgetKeyName) {
-      throw new ReservationNotFoundError(reservationId);
-    }
+        if (!budgetKeyName) {
+          throw new ReservationNotFoundError(reservationId);
+        }
 
-    const bKey = this.budgetKey(budgetKeyName);
+        const bKey = this.budgetKey(budgetKeyName);
 
-    const result = (await this.redis.eval(
-      RELEASE_LUA,
-      2,
-      rKey,
-      bKey
-    )) as string[];
+        const result = (await this.redis.eval(
+          RELEASE_LUA,
+          2,
+          rKey,
+          bKey
+        )) as string[];
 
-    const status = result[0];
+        const status = result[0];
 
-    if (status === 'ERR_RESERVATION_NOT_FOUND') {
-      throw new ReservationNotFoundError(reservationId);
-    }
+        if (status === 'ERR_RESERVATION_NOT_FOUND') {
+          throw new ReservationNotFoundError(reservationId);
+        }
 
-    if (status === 'ERR_INVALID_STATE') {
-      const currentStatus = result[1] as ReservationStatus;
-      const attemptedAction = result[2] ?? 'release';
-      throw new InvalidReservationStateError(reservationId, currentStatus, attemptedAction);
-    }
+        if (status === 'ERR_INVALID_STATE') {
+          const currentStatus = result[1] as ReservationStatus;
+          const attemptedAction = result[2] ?? 'release';
+          throw new InvalidReservationStateError(reservationId, currentStatus, attemptedAction);
+        }
 
-    if (status === 'OK') {
-      const createdAt = Number(result[1]);
-      const expiresAt = Number(result[2]);
-      const reservedAmount = Number(result[3]);
-      const unit = result[4]!;
-      const key = result[5] ?? budgetKeyName;
+        if (status === 'OK') {
+          const createdAt = Number(result[1]);
+          const expiresAt = Number(result[2]);
+          const reservedAmount = Number(result[3]);
+          const unit = result[4]!;
+          const key = result[5] ?? budgetKeyName;
 
-      return {
-        id: reservationId,
-        key,
-        reserved: { amount: reservedAmount, unit },
-        status: 'released',
-        createdAt,
-        expiresAt,
-      };
-    }
+          return {
+            id: reservationId,
+            key,
+            reserved: { amount: reservedAmount, unit },
+            status: 'released' as ReservationStatus,
+            createdAt,
+            expiresAt,
+          };
+        }
 
-    throw new CappdError(`Unexpected response from release Lua script: ${JSON.stringify(result)}`);
+        throw new CappdError(`Unexpected response from release Lua script: ${JSON.stringify(result)}`);
+      },
+      reservationId
+    );
   }
 
   /**
@@ -330,33 +413,39 @@ export class RedisStore implements ResourceStore {
    * Returns null if not found.
    */
   async getReservation(reservationId: string): Promise<Reservation | null> {
-    const rKey = this.reservationKey(reservationId);
-    const data = await this.redis.hgetall(rKey);
+    return await this.runCommand(
+      'getReservation',
+      async () => {
+        const rKey = this.reservationKey(reservationId);
+        const data = await this.redis.hgetall(rKey);
 
-    if (!data || Object.keys(data).length === 0 || !data.id || !data.key) {
-      return null;
-    }
+        if (!data || Object.keys(data).length === 0 || !data.id || !data.key) {
+          return null;
+        }
 
-    const reservation: Reservation = {
-      id: data.id,
-      key: data.key,
-      reserved: {
-        amount: Number(data.reservedAmount),
-        unit: data.unit ?? '',
+        const reservation: Reservation = {
+          id: data.id,
+          key: data.key,
+          reserved: {
+            amount: Number(data.reservedAmount),
+            unit: data.unit ?? '',
+          },
+          status: data.status as ReservationStatus,
+          createdAt: Number(data.createdAt),
+          expiresAt: Number(data.expiresAt),
+        };
+
+        if (data.committedAmount !== undefined) {
+          reservation.committed = {
+            amount: Number(data.committedAmount),
+            unit: data.unit ?? '',
+          };
+        }
+
+        return reservation;
       },
-      status: data.status as ReservationStatus,
-      createdAt: Number(data.createdAt),
-      expiresAt: Number(data.expiresAt),
-    };
-
-    if (data.committedAmount !== undefined) {
-      reservation.committed = {
-        amount: Number(data.committedAmount),
-        unit: data.unit ?? '',
-      };
-    }
-
-    return reservation;
+      reservationId
+    );
   }
 
   /**
@@ -364,7 +453,11 @@ export class RedisStore implements ResourceStore {
    */
   async close(): Promise<void> {
     if (this.ownsClient) {
-      await this.redis.quit();
+      try {
+        await this.redis.quit();
+      } catch {
+        this.redis.disconnect();
+      }
     }
   }
 
