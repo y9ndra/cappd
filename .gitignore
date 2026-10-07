@@ -6,3 +6,5 @@ coverage/
 *.tsbuildinfo
 ROADMAP.md
 docs/
+*.tgz
+dummy-consumer/
