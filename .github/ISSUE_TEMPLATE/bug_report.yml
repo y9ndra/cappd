@@ -1,0 +1,33 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in Cappd
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting an issue! Please provide as much detail as possible.
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce / Minimal Code Example
+      description: Code snippet showing store initialization, budget setup, and the failed execution.
+      placeholder: |
+        const cappd = new Cappd({ store: new RedisStore(...) });
+        await cappd.setBudget({ key: 'tenant:1', limit: 1000, unit: 'tokens' });
+        // ...
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Node version, Redis version, OS, and Cappd version.
+      placeholder: Node 20.x, Redis 7.x, Linux x64, Cappd 0.1.0
+    validations:
+      required: true
