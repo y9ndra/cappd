@@ -214,4 +214,5 @@ npm run build
 
 * Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions.
 * For security disclosures, see [SECURITY.md](SECURITY.md).
+* This project adheres to the [Code of Conduct](CODE_OF_CONDUCT.md).
 * Licensed under the [MIT License](LICENSE).

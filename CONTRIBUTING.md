@@ -62,6 +62,14 @@ npm pack --dry-run
 
 ---
 
+## Before Opening an Issue or Pull Request
+
+1. **Search Existing Issues**: Search both open and closed issues and pull requests first. The bug or question may already have been addressed or resolved.
+2. **Discuss Major Changes First**: For large feature proposals or architectural changes, open an issue to discuss the design and trade-offs before writing code.
+3. **Provide a Minimal Reproduction**: Bug reports should include a self-contained, reproducible snippet demonstrating the problem, along with your Node.js and Redis versions.
+
+---
+
 ## Architectural Rules for Contributors
 
 When submitting changes, keep the following core rules in mind:
