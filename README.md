@@ -1,7 +1,10 @@
 # Cappd
 
-> **Resource budget and reservation engine for TypeScript & Node.js**
+**A generic resource budget and two-phase reservation engine for TypeScript & Node.js.**
 
+Prevent quota overages, handle variable-cost workloads (like LLM tokens, API credits, and compute tasks), and eliminate concurrency race conditions using atomic pre-reservations and post-execution reconciliation.
+
+[![npm version](https://img.shields.io/npm/v/cappd.svg?style=flat&color=3178C6)](https://www.npmjs.com/package/cappd)
 [![CI](https://github.com/y9ndra/cappd/actions/workflows/ci.yml/badge.svg)](https://github.com/y9ndra/cappd/actions)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6+-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Tests](https://img.shields.io/badge/tests-98%20passing-brightgreen?logo=vitest&logoColor=white)](https://vitest.dev/)
@@ -147,6 +150,43 @@ app.post(
 
 ---
 
+## API Reference
+
+### Core Engine (`Cappd`)
+
+| Method / Property | Signature | Description |
+| :--- | :--- | :--- |
+| `new Cappd({ store? })` | `constructor` | Initializes the engine. Defaults to an in-memory `MemoryStore`. |
+| `cappd.setBudget(budget)` | `({ key, limit, unit }) => Promise<void>` | Sets or updates a capacity ceiling for a given key. |
+| `cappd.getBudget(key)` | `(key: string) => Promise<BudgetState \| null>` | Returns balance state: `limit`, `committed`, `reserved`, `available`. |
+| `cappd.execute(options)` | `({ key, estimate, operation, usage }) => Promise<ExecutionResult>` | Atomic lifecycle: pre-reserves hold, executes task, rolls back on error, measures & commits. |
+| `cappd.getReservation(id)` | `(id: string) => Promise<Reservation \| null>` | Inspects an individual reservation hold by ID. |
+| `cappd.store` | `ResourceStore` | Direct access to underlying store primitives (`reserve`, `commit`, `release`). |
+
+### Storage Backends
+
+| Store | Purpose |
+| :--- | :--- |
+| `RedisStore` | Clustered production storage powered by atomic Redis Lua scripts. |
+| `MemoryStore` | Zero-dependency local storage for development, single-node services, and tests. |
+
+### Express Middleware
+
+| Export | Description |
+| :--- | :--- |
+| `protectRoute(cappd, options, handler)` | Route wrapper ensuring pre-reservation and pre-response usage commitment. Returns HTTP 429 on budget exhaustion. |
+
+### Domain Errors
+
+| Error | Trigger Condition |
+| :--- | :--- |
+| `BudgetExceededError` | Thrown when requested capacity exceeds the available budget limit. |
+| `CappdInfrastructureError` | Thrown when an underlying store (e.g. Redis) is unreachable or times out (fails closed). |
+| `UsageMeasurementError` | Thrown if the operation succeeds but measuring actual resource usage fails. |
+| `CappdError` | Base domain error class for all Cappd exceptions. |
+
+---
+
 ## Distributed Concurrency (RedisStore)
 
 In multi-container or clustered deployments, `RedisStore` enforces atomicity across processes using embedded Lua scripts:
@@ -210,9 +250,25 @@ npm run build
 
 ---
 
-## Contributing & License
+## Star & Support ⭐
 
-* Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions.
-* For security disclosures, see [SECURITY.md](SECURITY.md).
-* This project adheres to the [Code of Conduct](CODE_OF_CONDUCT.md).
-* Licensed under the [MIT License](LICENSE).
+If you find **Cappd** useful for managing variable-cost quotas, LLM token limits, or protecting your APIs from concurrency race conditions, please consider starring the repository on GitHub! It helps other developers discover the library and supports ongoing maintenance.
+
+[![Star on GitHub](https://img.shields.io/github/stars/y9ndra/cappd?style=social)](https://github.com/y9ndra/cappd)
+
+* **Found a bug or have a suggestion?** Open an issue on [GitHub Issues](https://github.com/y9ndra/cappd/issues).
+* **Want to contribute?** Check out our [Contributing Guide](CONTRIBUTING.md).
+* **Security vulnerability?** See [SECURITY.md](SECURITY.md) for private reporting.
+
+---
+
+## Community & Contributing
+
+* Please adhere to our [Code of Conduct](CODE_OF_CONDUCT.md).
+* Pull requests and architectural proposals are welcome! Follow the workflow in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+---
+
+## License
+
+Distributed under the [MIT License](LICENSE). Copyright &copy; 2026 [Yugendhra](https://github.com/y9ndra).
