@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/y9ndra/cappd/main/.github/assets/cappd-logo.png" alt="Cappd Logo" width="180" />
+</p>
+
 # Cappd
 
 A generic resource budgeting and reservation engine for TypeScript & Node.js.
