@@ -1,8 +1,8 @@
 # Cappd
 
-**A generic resource budget and two-phase reservation engine for TypeScript & Node.js.**
+A generic resource budgeting and reservation engine for TypeScript & Node.js.
 
-Prevent quota overages, handle variable-cost workloads (like LLM tokens, API credits, and compute tasks), and eliminate concurrency race conditions using atomic pre-reservations and post-execution reconciliation.
+Reserve capacity before execution, measure actual usage, and reconcile it safely.
 
 [![npm version](https://img.shields.io/npm/v/cappd.svg?style=flat&color=3178C6)](https://www.npmjs.com/package/cappd)
 [![CI](https://github.com/y9ndra/cappd/actions/workflows/ci.yml/badge.svg)](https://github.com/y9ndra/cappd/actions)
