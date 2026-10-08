@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./.github/assets/cappd-banner.jpg" alt="Cappd Banner" width="100%" />
+  <img src="https://raw.githubusercontent.com/y9ndra/cappd/main/.github/assets/cappd-banner.jpg" alt="Cappd Banner" width="100%" />
 </p>
 
 # Cappd
