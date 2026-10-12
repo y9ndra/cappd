@@ -1,6 +1,6 @@
 {
   "name": "cappd",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Generic resource budget and reservation engine for TypeScript and Node.js",
   "type": "module",
   "main": "./dist/index.cjs",
